@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#b00020" />
+  <link rel="manifest" href="manifest.json" />
+  <title>SOS Femme CM</title>
+  <style>
+    :root { --red:#b00020; --dark:#111; --bg:#fafafa; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:0; background:var(--bg); color:var(--dark); }
+    header { padding:16px; background:#fff; border-bottom:1px solid #e6e6e6; position:sticky; top:0; }
+    h1 { font-size:18px; margin:0; }
+    main { padding:16px; max-width:520px; margin:0 auto; }
+    .card { background:#fff; border:1px solid #e6e6e6; border-radius:14px; padding:14px; margin-bottom:12px; box-shadow: 0 1px 0 rgba(0,0,0,.03); }
+    .row { display:flex; gap:10px; }
+    .row > * { flex:1; }
+    label { font-size:12px; color:#444; display:block; margin-bottom:6px; }
+    input, textarea { width:100%; padding:12px; border:1px solid #ddd; border-radius:12px; font-size:15px; outline:none; }
+    textarea { min-height:84px; resize:vertical; }
+    button { width:100%; padding:14px; border:none; border-radius:14px; font-size:16px; font-weight:700; cursor:pointer; }
+    .btn { background:#111; color:#fff; }
+    .btn-outline { background:#fff; color:#111; border:1px solid #ddd; }
+    .btn-sos { background:var(--red); color:#fff; font-size:18px; padding:18px; }
+    .muted { color:#555; font-size:13px; line-height:1.35; }
+    .danger { color:var(--red); font-weight:700; }
+    .tiny { font-size:12px; color:#666; }
+    .contacts { display:grid; gap:10px; }
+    .contact { padding:12px; border:1px solid #eee; border-radius:14px; background:#fff; }
+    .badge { display:inline-block; padding:4px 10px; border-radius:999px; background:#fff; border:1px solid #eee; font-size:12px; }
+    .countdown { font-size:18px; font-weight:800; color:var(--red); }
+    .hidden { display:none; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>SOS Femme CM</h1>
+    <div class="tiny">PWA gratuite — alerte tes proches en 1 geste</div>
+  </header>
+
+  <main>
+    <div class="card">
+      <div class="muted">
+        <span class="danger">Avertissement :</span> cette application alerte vos proches. Elle ne remplace pas les forces de sécurité.
+      </div>
+    </div>
+
+    <div class="card">
+      <label>Message SOS (modifiable)</label>
+      <textarea id="msg"></textarea>
+      <div class="tiny" style="margin-top:8px;">
+        Conseil : reste court et clair. Exemple : “🚨 ALERTE URGENCE…”
+      </div>
+      <div style="height:10px;"></div>
+      <button class="btn" id="saveMsg">Enregistrer le message</button>
+    </div>
+
+    <div class="card">
+      <div class="row" style="align-items:center; justify-content:space-between;">
+        <div>
+          <div style="font-weight:800;">Contacts de confiance</div>
+          <div class="tiny">Min 3 — Max 10</div>
+        </div>
+        <span class="badge" id="countBadge">0/10</span>
+      </div>
+
+      <div style="height:10px;"></div>
+
+      <div class="contacts" id="contacts"></div>
+
+      <div style="height:10px;"></div>
+      <button class="btn-outline" id="add">+ Ajouter un contact</button>
+      <div style="height:10px;"></div>
+      <button class="btn" id="save">Enregistrer les contacts</button>
+    </div>
+
+    <div class="card">
+      <button class="btn-sos" id="sosBtn">🚨 SOS</button>
+
+      <div id="confirmBox" class="hidden" style="margin-top:12px;">
+        <div class="muted">
+          Envoi de l’alerte dans <span class="countdown" id="sec">5</span> secondes…
+          <br/>Appuie sur <b>Annuler</b> si c’est une fausse alerte.
+        </div>
+        <div style="height:10px;"></div>
+        <button class="btn-outline" id="cancel">Annuler</button>
+      </div>
+
+      <div class="tiny" style="margin-top:12px;">
+        Après le compte à rebours, ton téléphone ouvrira l’app SMS avec le message déjà rempli.
+      </div>
+    </div>
+  </main>
+
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./sw.js").catch(()=>{});
+    }
+
+    const LS_KEY = "sosfemme_cm_v1";
+    const DEFAULT_MSG =
+`🚨 ALERTE URGENCE
+Je suis en danger. Merci de m’appeler immédiatement et de prévenir mes proches.
+(Envoyé via SOS Femme CM)`;
+
+    const $ = (id)=>document.getElementById(id);
+
+    let state = { message: DEFAULT_MSG, contacts: [] };
+
+    function load() {
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (raw) state = JSON.parse(raw);
+      } catch(e) {}
+      if (!state.message) state.message = DEFAULT_MSG;
+      if (!Array.isArray(state.contacts)) state.contacts = [];
+    }
+
+    function saveState() {
+      localStorage.setItem(LS_KEY, JSON.stringify(state));
+    }
+
+    function sanitizeNumber(num) {
+      num = (num || "").trim();
+      let out = "";
+      for (let i=0;i<num.length;i++){
+        const c = num[i];
+        if ((c>='0' && c<='9') || (c==='+' && out.length===0)) out += c;
+      }
+      return out;
+    }
+
+    function renderContacts() {
+      const wrap = $("contacts");
+      wrap.innerHTML = "";
+      const c = state.contacts.slice(0,10);
+
+      c.forEach((ct, idx) => {
+        const div = document.createElement("div");
+        div.className = "contact";
+        div.innerHTML = `
+          <div class="row">
+            <div>
+              <label>Nom</label>
+              <input data-k="name" data-i="${idx}" value="${ct.name || ""}" placeholder="Ex: Maman" />
+            </div>
+            <div>
+              <label>Numéro</label>
+              <input data-k="phone" data-i="${idx}" value="${ct.phone || ""}" placeholder="Ex: +2376xxxxxxxx" inputmode="tel" />
+            </div>
+          </div>
+          <div style="height:10px;"></div>
+          <button class="btn-outline" data-del="${idx}">Supprimer</button>
+        `;
+        wrap.appendChild(div);
+      });
+
+      $("countBadge").textContent = `${c.length}/10`;
+    }
+
+    function bindEvents() {
+      $("add").addEventListener("click", () => {
+        if (state.contacts.length >= 10) return alert("Maximum 10 contacts.");
+        state.contacts.push({name:"", phone:""});
+        renderContacts();
+      });
+
+      $("contacts").addEventListener("input", (e) => {
+        const i = e.target.getAttribute("data-i");
+        const k = e.target.getAttribute("data-k");
+        if (i === null || !k) return;
+        const idx = Number(i);
+        if (!state.contacts[idx]) return;
+        state.contacts[idx][k] = e.target.value;
+      });
+
+      $("contacts").addEventListener("click", (e) => {
+        const d = e.target.getAttribute("data-del");
+        if (d === null) return;
+        const idx = Number(d);
+        state.contacts.splice(idx, 1);
+        renderContacts();
+      });
+
+      $("save").addEventListener("click", () => {
+        const cleaned = state.contacts
+          .map(c => ({ name: (c.name||"").trim(), phone: sanitizeNumber(c.phone) }))
+          .filter(c => c.phone.length >= 7);
+
+        if (cleaned.length < 3) {
+          alert("Ajoute au moins 3 numéros valides.");
+          return;
+        }
+        state.contacts = cleaned.slice(0,10);
+        saveState();
+        renderContacts();
+        alert("Contacts enregistrés ✅");
+      });
+
+      $("saveMsg").addEventListener("click", () => {
+        state.message = $("msg").value || DEFAULT_MSG;
+        saveState();
+        alert("Message enregistré ✅");
+      });
+
+      let timer = null;
+      let remaining = 0;
+
+      function resetConfirm() {
+        $("confirmBox").classList.add("hidden");
+        if (timer) clearInterval(timer);
+        timer = null;
+        remaining = 0;
+        $("sec").textContent = "5";
+      }
+
+      $("cancel").addEventListener("click", resetConfirm);
+
+      $("sosBtn").addEventListener("click", () => {
+        const contacts = (state.contacts || []).filter(c => sanitizeNumber(c.phone).length >= 7);
+        if (contacts.length < 3) {
+          alert("Configure d’abord au moins 3 contacts.");
+          return;
+        }
+
+        resetConfirm();
+        $("confirmBox").classList.remove("hidden");
+        remaining = 5;
+        $("sec").textContent = String(remaining);
+
+        timer = setInterval(() => {
+          remaining -= 1;
+          $("sec").textContent = String(remaining);
+          if (remaining <= 0) {
+            clearInterval(timer);
+            timer = null;
+
+            const numbers = contacts.slice(0,10).map(c => sanitizeNumber(c.phone)).join(",");
+            const text = encodeURIComponent(state.message || DEFAULT_MSG);
+            const uri = `sms:${numbers}?body=${text}`;
+
+            resetConfirm();
+            window.location.href = uri;
+          }
+        }, 1000);
+      });
+    }
+
+    load();
+    $("msg").value = state.message || DEFAULT_MSG;
+    if (state.contacts.length === 0) state.contacts = [{name:"", phone:""},{name:"", phone:""},{name:"", phone:""}];
+    renderContacts();
+    bindEvents();
+  </script>
+</body>
+  </html￼Enter
